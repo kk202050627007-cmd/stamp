@@ -277,6 +277,10 @@ function render(){
 function bindEvents(){
   const app=document.getElementById('app')
 
+  // file input：直接绑定在元素上，不走委托，避免 render 后丢失
+  const filein=document.getElementById('filein')
+  if(filein) filein.addEventListener('change',()=>handleFile(filein))
+
   // 按钮 / select / checkbox 事件委托
   app.addEventListener('click',e=>{
     const b=e.target.closest('[data-action]')
@@ -299,8 +303,7 @@ function bindEvents(){
     if(e.target.dataset.action==='font'){state.font=e.target.value;render();return}
     // showText checkbox
     if(e.target.id==='st'){state.showText=e.target.checked;render();return}
-    // file
-    if(e.target.id==='filein'){handleFile(e.target);return}
+    // file handled directly in bindEvents
   })
 
   // 文字输入：input 事件只更新 state，不 render（防止键盘收回）
