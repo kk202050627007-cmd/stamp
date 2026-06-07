@@ -30,7 +30,6 @@ select{-webkit-appearance:none;appearance:none}
 .exp-close{background:#222;border:1px solid #444;color:#eee;padding:10px 32px;border-radius:3px;font-size:12px;letter-spacing:.15em;cursor:pointer}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 </head>
 <body>
 
@@ -457,29 +456,8 @@ async function handleFile(input){
 async function doExport(){
   const btn=document.getElementById('btn-export')
   btn.textContent='生成中…';btn.style.background='#ccc';btn.style.pointerEvents='none'
-  const hint=document.getElementById('crop-hint');if(hint)hint.style.display='none'
   try{
-    const {cW,cH}=getDims()
-    const SCALE=3
-    // 创建离屏容器，fixed 定位在屏幕外，overflow:hidden 给 html2canvas 用
-    const offscreen=document.createElement('div')
-    offscreen.style.cssText=`position:fixed;left:-9999px;top:0;width:${cW}px;height:${cH}px;overflow:hidden;border-radius:6px;`
-    offscreen.style.background=state.bg
-    // 克隆邮票内容
-    const src=document.getElementById('stamp-export')
-    const clone=src.cloneNode(true)
-    clone.style.cssText=`position:relative;width:${cW}px;height:${cH}px;overflow:hidden;`
-    // clone 里的 bg div 可能尺寸不对，直接设背景在 offscreen 上
-    const bgDiv=clone.querySelector('#stamp-bg')
-    if(bgDiv) bgDiv.remove()
-    offscreen.appendChild(clone)
-    document.body.appendChild(offscreen)
-    const canvas=await html2canvas(offscreen,{
-      scale:SCALE,useCORS:true,backgroundColor:state.bg,logging:false,
-      width:cW,height:cH,
-    })
-    document.body.removeChild(offscreen)
-    const dataUrl=canvas.toDataURL('image/png')
+    const dataUrl=await drawStampCanvas()
     const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)
     if(isIOS){
       document.getElementById('export-img').src=dataUrl
@@ -489,9 +467,138 @@ async function doExport(){
       a.download=`stamp-${state.cityEn.replace(/\s/g,'_')}.png`
       a.href=dataUrl;a.click()
     }
-  }catch(e){console.error(e);alert('生成失败，请重试')}
-  if(hint)hint.style.display='block'
+  }catch(e){console.error(e);alert('生成失败：'+e.message)}
   btn.textContent='导出 PNG';btn.style.background='#fff';btn.style.pointerEvents=''
+}
+
+/* 纯 Canvas 手动绘制邮票，不依赖 html2canvas */
+async function drawStampCanvas(){
+  const SC=3 // 3x 分辨率
+  const {imgW,imgH,tzH,sW,sH,cW,cH}=getDims()
+  const cv=document.createElement('canvas')
+  cv.width=cW*SC; cv.height=cH*SC
+  const ctx=cv.getContext('2d')
+  ctx.scale(SC,SC)
+
+  // 1. 背景
+  ctx.fillStyle=state.bg
+  ctx.fillRect(0,0,cW,cH)
+
+  // 2. 邮票底色（裁剪到锯齿路径）
+  const ox=MARGIN, oy=MARGIN
+  ctx.save()
+  drawStampClip(ctx,sW,sH,ox,oy,0,4)
+  ctx.fillStyle=state.stampColor
+  ctx.fill()
+  ctx.restore()
+
+  // 3. 照片（裁剪到图片区域矩形）
+  if(state.image){
+    await new Promise(res=>{
+      const img=new Image()
+      img.onload=()=>{
+        ctx.save()
+        ctx.beginPath()
+        ctx.rect(ox+PAD, oy+PAD, imgW, imgH)
+        ctx.clip()
+        // 应用裁剪偏移和缩放
+        ctx.drawImage(img,
+          ox+PAD+state.imgX, oy+PAD+state.imgY,
+          img.naturalWidth*state.imgScale,
+          img.naturalHeight*state.imgScale
+        )
+        ctx.restore()
+        res()
+      }
+      img.onerror=res
+      img.src=state.image
+    })
+  }
+
+  // 4. 内框虚线
+  ctx.save()
+  ctx.strokeStyle=state.textColor
+  ctx.globalAlpha=0.28
+  ctx.lineWidth=0.7
+  drawStampClipPath(ctx,sW,sH,ox,oy,BI,3)
+  ctx.stroke()
+  ctx.restore()
+
+  // 5. 文字区
+  if(state.showText){
+    const tzY=oy+PAD+imgH+8
+    const tzX=ox+PAD
+    const font=state.font
+    ctx.fillStyle=state.textColor
+
+    // meta line
+    ctx.save()
+    ctx.globalAlpha=0.6
+    ctx.font=`8.5px ${font}`
+    ctx.textAlign='center'
+    ctx.fillText(`${state.year} · ${state.seasonEn} · ${state.seasonZh}`, tzX+imgW/2, tzY+18)
+    ctx.restore()
+
+    // city zh
+    const cityFS=Math.min(20, imgW/Math.max(state.cityZh.length,1)*1.1+4)
+    ctx.save()
+    ctx.font=`600 ${cityFS}px ${font}`
+    ctx.textAlign='center'
+    ctx.fillText(state.cityZh, tzX+imgW/2, tzY+18+cityFS+4)
+    ctx.restore()
+
+    // city en
+    ctx.save()
+    ctx.globalAlpha=0.55
+    ctx.font=`8px ${font}`
+    ctx.textAlign='center'
+    ctx.fillText(state.cityEn, tzX+imgW/2, tzY+18+cityFS+4+14)
+    ctx.restore()
+  }
+
+  return cv.toDataURL('image/png')
+}
+
+/* 画锯齿路径到 ctx（用于 fill） */
+function drawStampClip(ctx,W,H,ox,oy,inset,r){
+  ctx.beginPath()
+  drawStampClipPath(ctx,W,H,ox,oy,inset,r)
+}
+function drawStampClipPath(ctx,W,H,ox,oy,inset,r){
+  const x0=ox+inset,y0=oy+inset,w=W-inset*2,h=H-inset*2
+  const tN=Math.max(4,Math.round(w/(r*2*2.1)))
+  const sN=Math.max(4,Math.round(h/(r*2*2.1)))
+  const hs=w/tN,vs=h/sN
+  ctx.moveTo(x0+r,y0)
+  for(let i=0;i<tN;i++){
+    const x=x0+i*hs+hs/2
+    ctx.lineTo(x-r,y0)
+    ctx.arc(x,y0,r,Math.PI,0,true) // top: arc upward (outward)
+  }
+  ctx.lineTo(x0+w-r,y0)
+  ctx.quadraticCurveTo(x0+w,y0,x0+w,y0+r)
+  for(let i=0;i<sN;i++){
+    const y=y0+i*vs+vs/2
+    ctx.lineTo(x0+w,y-r)
+    ctx.arc(x0+w,y,r,Math.PI*1.5,Math.PI*0.5,false) // right: arc rightward
+  }
+  ctx.lineTo(x0+w,y0+h-r)
+  ctx.quadraticCurveTo(x0+w,y0+h,x0+w-r,y0+h)
+  for(let i=tN-1;i>=0;i--){
+    const x=x0+i*hs+hs/2
+    ctx.lineTo(x+r,y0+h)
+    ctx.arc(x,y0+h,r,0,Math.PI,true) // bottom: arc downward
+  }
+  ctx.lineTo(x0+r,y0+h)
+  ctx.quadraticCurveTo(x0,y0+h,x0,y0+h-r)
+  for(let i=sN-1;i>=0;i--){
+    const y=y0+i*vs+vs/2
+    ctx.lineTo(x0,y+r)
+    ctx.arc(x0,y,r,Math.PI*0.5,Math.PI*1.5,true) // left: arc leftward
+  }
+  ctx.lineTo(x0,y0+r)
+  ctx.quadraticCurveTo(x0,y0,x0+r,y0)
+  ctx.closePath()
 }
 
 function closeExport(){
