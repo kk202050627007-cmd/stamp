@@ -459,8 +459,26 @@ async function doExport(){
   btn.textContent='生成中…';btn.style.background='#ccc';btn.style.pointerEvents='none'
   const hint=document.getElementById('crop-hint');if(hint)hint.style.display='none'
   try{
-    const el=document.getElementById('stamp-export')
-    const canvas=await html2canvas(el,{scale:3,useCORS:true,backgroundColor:null,logging:false})
+    const {cW,cH}=getDims()
+    const SCALE=3
+    // 创建离屏容器，fixed 定位在屏幕外，overflow:hidden 给 html2canvas 用
+    const offscreen=document.createElement('div')
+    offscreen.style.cssText=`position:fixed;left:-9999px;top:0;width:${cW}px;height:${cH}px;overflow:hidden;border-radius:6px;`
+    offscreen.style.background=state.bg
+    // 克隆邮票内容
+    const src=document.getElementById('stamp-export')
+    const clone=src.cloneNode(true)
+    clone.style.cssText=`position:relative;width:${cW}px;height:${cH}px;overflow:hidden;`
+    // clone 里的 bg div 可能尺寸不对，直接设背景在 offscreen 上
+    const bgDiv=clone.querySelector('#stamp-bg')
+    if(bgDiv) bgDiv.remove()
+    offscreen.appendChild(clone)
+    document.body.appendChild(offscreen)
+    const canvas=await html2canvas(offscreen,{
+      scale:SCALE,useCORS:true,backgroundColor:state.bg,logging:false,
+      width:cW,height:cH,
+    })
+    document.body.removeChild(offscreen)
     const dataUrl=canvas.toDataURL('image/png')
     const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)
     if(isIOS){
@@ -471,7 +489,7 @@ async function doExport(){
       a.download=`stamp-${state.cityEn.replace(/\s/g,'_')}.png`
       a.href=dataUrl;a.click()
     }
-  }catch(e){alert('生成失败，请重试')}
+  }catch(e){console.error(e);alert('生成失败，请重试')}
   if(hint)hint.style.display='block'
   btn.textContent='导出 PNG';btn.style.background='#fff';btn.style.pointerEvents=''
 }
