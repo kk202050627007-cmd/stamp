@@ -16,18 +16,13 @@ body{font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;color:#ddd;overscro
 #app{max-width:480px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column}
 button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 select{-webkit-appearance:none;appearance:none}
-/* 关键：input 不重绘，用事件委托 */
-.txt-input{width:100%;background:#222;border:1px solid #2E2E2E;color:#eee;padding:7px 9px;font-size:16px;border-radius:3px;outline:none;/* font-size:16px 防止 iOS 自动缩放页面 */}
+.txt-input{width:100%;background:#222;border:1px solid #2E2E2E;color:#eee;padding:7px 9px;font-size:16px;border-radius:3px;outline:none}
 @keyframes spin{from{transform:rotate(0)}to{transform:rotate(360deg)}}
 .spin{animation:spin 1s linear infinite;display:inline-block}
-
-/* 图片裁剪容器 */
 #crop-wrap{position:absolute;overflow:hidden;touch-action:none;cursor:grab}
 #crop-wrap:active{cursor:grabbing}
-#crop-img{position:absolute;transform-origin:0 0;will-change:transform;display:block;user-select:none;-webkit-user-drag:none}
+#crop-img{position:absolute;transform-origin:0 0;will-change:transform;display:block;user-select:none;-webkit-user-drag:none;max-width:none}
 .crop-hint{position:absolute;bottom:4px;left:0;right:0;text-align:center;font-size:9px;letter-spacing:.1em;color:rgba(255,255,255,.45);pointer-events:none}
-
-/* 导出遮罩 */
 #export-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:100;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px}
 #export-overlay.show{display:flex}
 #export-overlay img{max-width:100%;max-height:60vh;border-radius:4px;box-shadow:0 4px 24px rgba(0,0,0,.6)}
@@ -38,8 +33,67 @@ select{-webkit-appearance:none;appearance:none}
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 </head>
 <body>
-<div id="app"></div>
-<!-- 导出预览遮罩 -->
+
+<!-- ═══ 静态骨架：只渲染一次，之后只改属性 ═══ -->
+<div id="app">
+  <!-- header -->
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;border-bottom:1px solid #1E1E1E;background:#161616;position:sticky;top:0;z-index:10">
+    <div style="font-size:12px;font-weight:700;letter-spacing:.25em;color:#fff;text-transform:uppercase">Stamp Maker</div>
+    <button id="btn-upload" style="background:#222;border:1px solid #333;color:#aaa;padding:6px 16px;font-size:11px;letter-spacing:.12em;border-radius:3px;cursor:pointer">+ 上传图片</button>
+    <input id="filein" type="file" accept="image/*" style="display:none"/>
+  </div>
+
+  <!-- preview -->
+  <div style="display:flex;align-items:center;justify-content:center;padding:20px 0;background:#111;overflow:visible">
+    <div id="stamp-export" style="position:relative;flex-shrink:0;border-radius:6px;box-shadow:0 8px 40px rgba(0,0,0,.55);overflow:visible">
+      <!-- bg layer -->
+      <div id="stamp-bg" style="position:absolute;inset:0;border-radius:6px"></div>
+      <!-- stamp layer -->
+      <div id="stamp-inner" style="position:absolute">
+        <svg id="stamp-svg" style="position:absolute;top:0;left:0;overflow:visible">
+          <path id="svg-outer"/>
+          <path id="svg-inner" fill="none" stroke-width=".7" opacity=".28"/>
+        </svg>
+        <!-- image area -->
+        <div id="crop-wrap" style="position:absolute;overflow:hidden;touch-action:none">
+          <img id="crop-img" style="position:absolute;transform-origin:0 0;will-change:transform;display:none;max-width:none"/>
+          <div id="img-placeholder" style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:10px;letter-spacing:.15em;opacity:.35">UPLOAD IMAGE</div>
+          <div class="crop-hint" id="crop-hint" style="display:none">双指缩放 · 拖动调整</div>
+          <div style="position:absolute;inset:0;pointer-events:none;background-image:url('data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%27200%27 height=%27200%27%3E%3Cfilter id=%27n%27%3E%3CfeTurbulence type=%27fractalNoise%27 baseFrequency=%270.85%27 numOctaves=%274%27 stitchTiles=%27stitch%27/%3E%3C/filter%3E%3Crect width=%27100%25%27 height=%27100%25%27 filter=%27url(%23n)%27 opacity=%270.055%27/%3E%3C/svg%3E');mix-blend-mode:multiply"></div>
+        </div>
+        <!-- text area -->
+        <div id="stamp-text" style="position:absolute;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px">
+          <div id="txt-meta" style="font-size:8.5px;letter-spacing:.22em;opacity:.6"></div>
+          <div id="txt-city-zh" style="font-weight:600;letter-spacing:.04em;line-height:1.15;text-align:center"></div>
+          <div id="txt-city-en" style="font-size:8px;letter-spacing:.2em;opacity:.55;text-align:center"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- geo bar -->
+  <div id="geo-bar" style="display:none"></div>
+
+  <!-- controls -->
+  <div style="background:#161616;border-top:1px solid #1E1E1E;flex:1;display:flex;flex-direction:column">
+    <!-- tabs -->
+    <div style="display:flex;border-bottom:1px solid #1E1E1E">
+      <button data-tab="color" style="flex:1;padding:12px 0;font-size:10px;letter-spacing:.12em;border:none;cursor:pointer;text-transform:uppercase;background:#1E1E1E;border-bottom:2px solid #fff;color:#fff">颜色 / 字体</button>
+      <button data-tab="text"  style="flex:1;padding:12px 0;font-size:10px;letter-spacing:.12em;border:none;cursor:pointer;text-transform:uppercase;background:transparent;border-bottom:2px solid transparent;color:#555">文字</button>
+      <button data-tab="ratio" style="flex:1;padding:12px 0;font-size:10px;letter-spacing:.12em;border:none;cursor:pointer;text-transform:uppercase;background:transparent;border-bottom:2px solid transparent;color:#555">比例</button>
+    </div>
+    <!-- panel content -->
+    <div id="panel-color" style="padding:18px 16px 24px;overflow-y:auto"></div>
+    <div id="panel-text"  style="padding:18px 16px 24px;overflow-y:auto;display:none"></div>
+    <div id="panel-ratio" style="padding:18px 16px 24px;overflow-y:auto;display:none"></div>
+  </div>
+
+  <!-- export -->
+  <div style="padding:12px 16px 32px;background:#111;border-top:1px solid #1A1A1A">
+    <button id="btn-export" style="width:100%;padding:14px 0;background:#fff;color:#111;border:none;font-size:11px;letter-spacing:.22em;font-weight:700;text-transform:uppercase;border-radius:3px;cursor:pointer">导出 PNG</button>
+  </div>
+</div>
+
 <div id="export-overlay">
   <img id="export-img" src="" alt=""/>
   <div class="exp-hint">长按图片 → 存储到相册<br/>或点击下方按钮关闭</div>
@@ -47,12 +101,10 @@ select{-webkit-appearance:none;appearance:none}
 </div>
 
 <script>
-/* ══════════════════════════════════════════
-   CONSTANTS
-══════════════════════════════════════════ */
+/* ═══ CONSTANTS ═══ */
 const SEASONS={en:['SPRING','SUMMER','AUTUMN','WINTER'],zh:['春','夏','秋','冬']}
 const M2S=[3,3,0,0,0,1,1,1,2,2,2,3]
-const now=new Date()
+const now=new Date(), m0=M2S[now.getMonth()]
 
 const FONTS=[
   {label:'OPPO Sans（中文无衬线）',  val:"'OPPO Sans','Noto Sans SC',sans-serif"},
@@ -75,108 +127,165 @@ const RATIOS=[
   {id:'9:16', label:'9:16 竖', w:240,r:9/16},
   {id:'16:9', label:'16:9 横', w:340,r:16/9},
 ]
+const PAD=18,BI=11,MARGIN=32,NOTCH=4
 
-const m=M2S[now.getMonth()]
 const state={
-  image:null,
-  // 图片裁剪状态
-  imgX:0,imgY:0,imgScale:1,
-  bg:'#3D4EBF',stampColor:'#F5EDD6',textColor:'#1C1C1C',
+  image:null, imgX:0,imgY:0,imgScale:1,
+  bg:'#3D4EBF', stampColor:'#F5EDD6', textColor:'#1C1C1C',
   font:FONTS[0].val,
   year:String(now.getFullYear()),
-  seasonEn:SEASONS.en[m],seasonZh:SEASONS.zh[m],
-  cityZh:'城市名',cityEn:'CITY NAME',
-  showText:true,panel:'color',ratio:RATIOS[1],
+  seasonEn:SEASONS.en[m0], seasonZh:SEASONS.zh[m0],
+  cityZh:'城市名', cityEn:'CITY NAME',
+  showText:true, panel:'color', ratio:RATIOS[1],
   geoStatus:'idle',
 }
 
-/* ══════════════════════════════════════════
-   STAMP PATH（向内凹入）
-══════════════════════════════════════════ */
-function stampPath(W,H,inset=0,r=4){
+/* ═══ STAMP PATH（向外凸出） ═══ */
+function stampPath(W,H,inset=0,r=NOTCH){
   const x0=inset,y0=inset,w=W-inset*2,h=H-inset*2
-  const hs=w/Math.max(4,Math.round(w/(r*2*2.1)))
-  const vs=h/Math.max(4,Math.round(h/(r*2*2.1)))
-  const tN=Math.round(w/hs),sN=Math.round(h/vs)
-  const hss=w/tN,vss=h/sN
+  const tN=Math.max(4,Math.round(w/(r*2*2.1)))
+  const sN=Math.max(4,Math.round(h/(r*2*2.1)))
+  const hs=w/tN,vs=h/sN
   let d=`M ${x0+r} ${y0}`
-  // top outward
-  for(let i=0;i<tN;i++){const x=x0+i*hss+hss/2;d+=` L ${x-r} ${y0} A ${r} ${r} 0 0 0 ${x+r} ${y0}`}
+  for(let i=0;i<tN;i++){const x=x0+i*hs+hs/2;d+=` L ${x-r} ${y0} A ${r} ${r} 0 0 0 ${x+r} ${y0}`}
   d+=` L ${x0+w-r} ${y0} Q ${x0+w} ${y0} ${x0+w} ${y0+r}`
-  // right outward
-  for(let i=0;i<sN;i++){const y=y0+i*vss+vss/2;d+=` L ${x0+w} ${y-r} A ${r} ${r} 0 0 1 ${x0+w} ${y+r}`}
+  for(let i=0;i<sN;i++){const y=y0+i*vs+vs/2;d+=` L ${x0+w} ${y-r} A ${r} ${r} 0 0 1 ${x0+w} ${y+r}`}
   d+=` L ${x0+w} ${y0+h-r} Q ${x0+w} ${y0+h} ${x0+w-r} ${y0+h}`
-  // bottom outward
-  for(let i=tN-1;i>=0;i--){const x=x0+i*hss+hss/2;d+=` L ${x+r} ${y0+h} A ${r} ${r} 0 0 0 ${x-r} ${y0+h}`}
+  for(let i=tN-1;i>=0;i--){const x=x0+i*hs+hs/2;d+=` L ${x+r} ${y0+h} A ${r} ${r} 0 0 0 ${x-r} ${y0+h}`}
   d+=` L ${x0+r} ${y0+h} Q ${x0} ${y0+h} ${x0} ${y0+h-r}`
-  // left outward
-  for(let i=sN-1;i>=0;i--){const y=y0+i*vss+vss/2;d+=` L ${x0} ${y+r} A ${r} ${r} 0 0 0 ${x0} ${y-r}`}
+  for(let i=sN-1;i>=0;i--){const y=y0+i*vs+vs/2;d+=` L ${x0} ${y+r} A ${r} ${r} 0 0 0 ${x0} ${y-r}`}
   d+=` L ${x0} ${y0+r} Q ${x0} ${y0} ${x0+r} ${y0} Z`
   return d
 }
 
-/* ══════════════════════════════════════════
-   RENDER — 只重绘非输入区域
-   输入框用事件委托，不参与重绘
-══════════════════════════════════════════ */
-let rendered=false
-
-function render(){
-  const {image,imgX,imgY,imgScale,bg,stampColor,textColor,font,
-         year,seasonEn,seasonZh,cityZh,cityEn,showText,panel,ratio,geoStatus}=state
-
-  const PAD=18,BI=11,MARGIN=32
+/* ═══ 计算尺寸 ═══ */
+function getDims(){
+  const {ratio,showText}=state
   const imgW=ratio.w-PAD*2
   const imgH=Math.round(imgW/ratio.r)
   const tzH=showText?68:0
-  const sW=ratio.w,sH=PAD+imgH+(showText?8:0)+tzH+PAD
-  const cW=sW+MARGIN*2,cH=sH+MARGIN*2
+  const sW=ratio.w, sH=PAD+imgH+(showText?8:0)+tzH+PAD
+  const cW=sW+MARGIN*2, cH=sH+MARGIN*2
+  return {imgW,imgH,tzH,sW,sH,cW,cH}
+}
 
-  const pOuter=stampPath(sW,sH,0,4)
-  const pInner=stampPath(sW,sH,BI,3)
+/* ═══════════════════════════════════════════
+   TARGETED DOM UPDATES — 不重建整个页面
+═══════════════════════════════════════════ */
+
+function updateStampSize(){
+  const {imgW,imgH,tzH,sW,sH,cW,cH}=getDims()
+  // 外层容器
+  const ex=document.getElementById('stamp-export')
+  ex.style.width=cW+'px'; ex.style.height=cH+'px'
+  // bg层
+  document.getElementById('stamp-bg').style.background=state.bg
+  // 邮票层定位
+  const inner=document.getElementById('stamp-inner')
+  inner.style.top=MARGIN+'px'; inner.style.left=MARGIN+'px'
+  inner.style.width=sW+'px'; inner.style.height=sH+'px'
+  // SVG
+  const svg=document.getElementById('stamp-svg')
+  svg.setAttribute('width',sW); svg.setAttribute('height',sH)
+  document.getElementById('svg-outer').setAttribute('d',stampPath(sW,sH,0,NOTCH))
+  document.getElementById('svg-outer').setAttribute('fill',state.stampColor)
+  document.getElementById('svg-inner').setAttribute('d',stampPath(sW,sH,BI,3))
+  document.getElementById('svg-inner').setAttribute('stroke',state.textColor)
+  // crop-wrap
+  const cw=document.getElementById('crop-wrap')
+  cw.style.top=PAD+'px'; cw.style.left=PAD+'px'
+  cw.style.width=imgW+'px'; cw.style.height=imgH+'px'
+  // text area
+  const tz=document.getElementById('stamp-text')
+  tz.style.top=(PAD+imgH+8)+'px'; tz.style.left=PAD+'px'
+  tz.style.width=imgW+'px'; tz.style.height=tzH+'px'
+  tz.style.display=state.showText?'flex':'none'
+  // placeholder color/font
+  const ph=document.getElementById('img-placeholder')
+  ph.style.color=state.textColor; ph.style.fontFamily=state.font
+}
+
+function updateColors(){
+  document.getElementById('stamp-bg').style.background=state.bg
+  document.getElementById('svg-outer').setAttribute('fill',state.stampColor)
+  document.getElementById('svg-inner').setAttribute('stroke',state.textColor)
+  // text colors
+  const ids=['txt-meta','txt-city-zh','txt-city-en']
+  ids.forEach(id=>{ const el=document.getElementById(id); if(el) el.style.color=state.textColor })
+  document.getElementById('img-placeholder').style.color=state.textColor
+  // active dots
+  document.querySelectorAll('[data-dot]').forEach(b=>{
+    const active=state[b.dataset.key]===b.dataset.dot
+    b.style.border=active?'2px solid #fff':'2px solid transparent'
+    b.style.outline=active?'2px solid #555':'none'
+  })
+}
+
+function updateFont(){
+  const font=state.font
+  const ids=['txt-meta','txt-city-zh','txt-city-en','img-placeholder']
+  ids.forEach(id=>{ const el=document.getElementById(id); if(el) el.style.fontFamily=font })
+}
+
+function updateTextContent(){
+  const {year,seasonEn,seasonZh,cityZh,cityEn,ratio}=state
+  const imgW=ratio.w-PAD*2
   const cityFS=Math.min(20,imgW/Math.max(cityZh.length,1)*1.1+4)
-  const grain=`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.055'/%3E%3C/svg%3E")`
+  const meta=document.getElementById('txt-meta')
+  const czh=document.getElementById('txt-city-zh')
+  const cen=document.getElementById('txt-city-en')
+  if(meta) meta.textContent=`${year} · ${seasonEn} · ${seasonZh}`
+  if(czh){ czh.textContent=cityZh; czh.style.fontSize=cityFS+'px' }
+  if(cen) cen.textContent=cityEn
+}
 
-  // geo bar
-  const geoBars={
+function updateGeoBar(){
+  const bar=document.getElementById('geo-bar')
+  const {geoStatus}=state
+  if(geoStatus==='idle'){bar.style.display='none';return}
+  bar.style.display='block'
+  const map={
     loading:`<div style="background:#1A2A1A;border-top:1px solid #2A3A2A;padding:8px 16px;font-size:10px;color:#4CAF50;letter-spacing:.12em;display:flex;align-items:center;gap:6px"><span class="spin">◌</span> 正在从照片 GPS 读取位置…</div>`,
     found:`<div style="background:#1A2A1A;border-top:1px solid #2A3A2A;padding:8px 16px;font-size:10px;color:#4CAF50;letter-spacing:.12em">📍 已自动识别位置 · 可在「文字」标签修改</div>`,
     none:`<div style="background:#1E1E1E;border-top:1px solid #2A2A2A;padding:8px 16px;font-size:10px;color:#555;letter-spacing:.12em">照片无 GPS 信息 · 请手动输入城市</div>`,
   }
+  bar.innerHTML=map[geoStatus]||''
+}
 
-  // color dots
-  const dots=(presets,key)=>presets.map(c=>{
-    const a=state[key]===c
-    return `<button data-action="color" data-key="${key}" data-val="${c}" style="width:26px;height:26px;border-radius:50%;background:${c};border:${a?'2px solid #fff':'2px solid transparent'};outline:${a?'2px solid #555':'none'};cursor:pointer;flex-shrink:0;padding:0"></button>`
-  }).join('')
-  const crow=(label,key,presets)=>`
+/* ═══ 面板内容（只在初始化和切换 tab 时重建） ═══ */
+function buildColorPanel(){
+  const dots=(presets,key)=>presets.map(c=>`
+    <button data-dot="${c}" data-key="${key}"
+      style="width:26px;height:26px;border-radius:50%;background:${c};border:${state[key]===c?'2px solid #fff':'2px solid transparent'};outline:${state[key]===c?'2px solid #555':'none'};cursor:pointer;flex-shrink:0;padding:0"></button>
+  `).join('')
+  const row=(label,key,presets)=>`
     <div style="margin-bottom:16px">
       <div style="font-size:9px;letter-spacing:.18em;color:#666;margin-bottom:7px;text-transform:uppercase">${label}</div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         ${dots(presets,key)}
-        <input type="color" data-action="color" data-key="${key}" value="${state[key]}"
+        <input type="color" data-colorpicker="${key}" value="${state[key]}"
           style="width:32px;height:26px;border:none;background:none;cursor:pointer;padding:0;flex-shrink:0"/>
       </div>
     </div>`
-
-  const colorPanel=`
-    ${crow('背景色','bg',PBG)}
-    ${crow('邮票色','stampColor',PSTAMP)}
-    ${crow('文字色','textColor',PTEXT)}
+  document.getElementById('panel-color').innerHTML=`
+    ${row('背景色','bg',PBG)}
+    ${row('邮票色','stampColor',PSTAMP)}
+    ${row('文字色','textColor',PTEXT)}
     <div>
       <div style="font-size:9px;letter-spacing:.18em;color:#666;margin-bottom:7px;text-transform:uppercase">字体</div>
-      <select data-action="font" style="width:100%;background:#222;border:1px solid #2E2E2E;color:#eee;padding:8px 9px;font-size:13px;border-radius:3px;cursor:pointer">
+      <select id="font-select" style="width:100%;background:#222;border:1px solid #2E2E2E;color:#eee;padding:8px 9px;font-size:13px;border-radius:3px;cursor:pointer">
         ${FONTS.map(f=>`<option value="${f.val}"${state.font===f.val?' selected':''}>${f.label}</option>`).join('')}
       </select>
     </div>`
+  document.getElementById('font-select').onchange=e=>{state.font=e.target.value;updateFont()}
+}
 
-  const geoBadge=geoStatus==='loading'
+function buildTextPanel(){
+  const geoBadge=state.geoStatus==='loading'
     ?`<span style="font-size:8px;padding:1px 6px;border-radius:10px;background:#1E3A1E;color:#4CAF50;margin-left:6px">定位中…</span>`
-    :geoStatus==='found'
+    :state.geoStatus==='found'
     ?`<span style="font-size:8px;padding:1px 6px;border-radius:10px;background:#1E3A1E;color:#4CAF50;margin-left:6px">📍 自动识别</span>`
     :''
-
-  // 输入框：用 data-field 标记，由委托处理，不触发 render
   const field=(label,key,badge='')=>`
     <div style="margin-bottom:12px;flex:1">
       <div style="display:flex;align-items:center;margin-bottom:5px">
@@ -184,181 +293,63 @@ function render(){
       </div>
       <input class="txt-input" data-field="${key}" value="${state[key].replace(/"/g,'&quot;')}" autocomplete="off" autocorrect="off" spellcheck="false"/>
     </div>`
-
-  const textPanel=`
+  document.getElementById('panel-text').innerHTML=`
     <div style="display:flex;gap:10px">${field('年份','year')}<div style="flex:1"></div></div>
     <div style="display:flex;gap:10px">${field('季节 EN','seasonEn')}${field('季节 ZH','seasonZh')}</div>
     ${field('城市（中文）','cityZh',geoBadge)}
     ${field('城市（英文）','cityEn')}
     <div style="display:flex;align-items:center;gap:8px;margin-top:4px">
-      <input type="checkbox" id="st" ${showText?'checked':''}
-        style="accent-color:#fff;width:15px;height:15px"/>
-      <label for="st" style="font-size:10px;letter-spacing:.1em;color:#666;cursor:pointer">显示文字区域</label>
+      <input type="checkbox" id="cb-showtext" ${state.showText?'checked':''} style="accent-color:#fff;width:15px;height:15px"/>
+      <label for="cb-showtext" style="font-size:10px;letter-spacing:.1em;color:#666;cursor:pointer">显示文字区域</label>
     </div>`
+  document.getElementById('cb-showtext').onchange=e=>{
+    state.showText=e.target.checked
+    updateStampSize(); updateTextContent()
+  }
+}
 
-  const ratioPanel=`
+function buildRatioPanel(){
+  document.getElementById('panel-ratio').innerHTML=`
     <div>
       <div style="font-size:9px;letter-spacing:.18em;color:#666;margin-bottom:7px;text-transform:uppercase">尺寸比例</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-        ${RATIOS.map(r=>`<button data-action="ratio" data-id="${r.id}"
+        ${RATIOS.map(r=>`<button data-ratio="${r.id}"
           style="padding:7px 12px;background:${state.ratio.id===r.id?'#fff':'#222'};color:${state.ratio.id===r.id?'#111':'#666'};border:1px solid ${state.ratio.id===r.id?'#fff':'#333'};border-radius:3px;font-size:10px;letter-spacing:.1em;cursor:pointer;white-space:nowrap">
           ${r.label}</button>`).join('')}
       </div>
     </div>`
-
-  const panels={color:colorPanel,text:textPanel,ratio:ratioPanel}
-  const tabs=[['color','颜色 / 字体'],['text','文字'],['ratio','比例']]
-
-  // 图片变换字符串
-  const imgTransform=`translate(${imgX}px,${imgY}px) scale(${imgScale})`
-
-  document.getElementById('app').innerHTML=`
-    <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px 10px;border-bottom:1px solid #1E1E1E;background:#161616;position:sticky;top:0;z-index:10">
-      <div style="font-size:12px;font-weight:700;letter-spacing:.25em;color:#fff;text-transform:uppercase">Stamp Maker</div>
-      <button data-action="upload" style="background:#222;border:1px solid #333;color:#aaa;padding:6px 16px;font-size:11px;letter-spacing:.12em;border-radius:3px;cursor:pointer">
-        ${image?'换图':'+ 上传图片'}
-      </button>
-      <input id="filein" type="file" accept="image/*" style="display:none"/>
-    </div>
-
-    <div style="display:flex;align-items:center;justify-content:center;padding:20px 0;background:#111;overflow:visible">
-      <div id="stamp-export" style="position:relative;width:${cW}px;height:${cH}px;flex-shrink:0;border-radius:6px;box-shadow:0 8px 40px rgba(0,0,0,.55);background:${bg};overflow:visible">
-        <div style="position:absolute;top:${MARGIN}px;left:${MARGIN}px;width:${sW}px;height:${sH}px">
-          <svg width="${sW}" height="${sH}" style="position:absolute;top:0;left:0;overflow:visible">
-            <path d="${pOuter}" fill="${stampColor}"/>
-            <path d="${pInner}" fill="none" stroke="${textColor}" stroke-width=".7" opacity=".28"/>
-          </svg>
-          <div id="crop-wrap" style="position:absolute;top:${PAD}px;left:${PAD}px;width:${imgW}px;height:${imgH}px;overflow:hidden;touch-action:none;clip-path:none">
-            ${image
-              ?`<img id="crop-img" src="${image}" style="position:absolute;transform-origin:0 0;transform:${imgTransform};display:block;user-select:none;-webkit-user-drag:none;max-width:none"/>`
-              :`<div style="width:100%;height:100%;background:rgba(0,0,0,.07);display:flex;align-items:center;justify-content:center;font-family:${font};color:${textColor};opacity:.35;font-size:10px;letter-spacing:.15em">UPLOAD IMAGE</div>`
-            }
-            ${image?`<div class="crop-hint">双指缩放 · 拖动调整</div>`:''}
-            <div style="position:absolute;inset:0;pointer-events:none;background-image:${grain};mix-blend-mode:multiply"></div>
-          </div>
-          ${showText?`
-          <div style="position:absolute;top:${PAD+imgH+8}px;left:${PAD}px;width:${imgW}px;height:${tzH}px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-family:${font};color:${textColor};gap:4px">
-            <div style="font-size:8.5px;letter-spacing:.22em;opacity:.6">${year} · ${seasonEn} · ${seasonZh}</div>
-            <div style="font-size:${cityFS}px;font-weight:600;letter-spacing:.04em;line-height:1.15;text-align:center">${cityZh}</div>
-            <div style="font-size:8px;letter-spacing:.2em;opacity:.55;text-align:center">${cityEn}</div>
-          </div>`:''}
-        </div>
-      </div>
-    </div>
-
-    ${geoBars[geoStatus]||''}
-
-    <div style="background:#161616;border-top:1px solid #1E1E1E;flex:1;display:flex;flex-direction:column">
-      <div style="display:flex;border-bottom:1px solid #1E1E1E">
-        ${tabs.map(([k,v])=>`<button data-action="panel" data-panel="${k}"
-          style="flex:1;padding:12px 0;font-size:10px;letter-spacing:.12em;background:${panel===k?'#1E1E1E':'transparent'};border-bottom:${panel===k?'2px solid #fff':'2px solid transparent'};color:${panel===k?'#fff':'#555'};border:none;cursor:pointer;text-transform:uppercase">
-          ${v}</button>`).join('')}
-      </div>
-      <div id="panel-body" style="padding:18px 16px 24px;overflow-y:auto">${panels[panel]||''}</div>
-    </div>
-
-    <div style="padding:12px 16px 32px;background:#111;border-top:1px solid #1A1A1A">
-      <button data-action="export"
-        style="width:100%;padding:14px 0;background:#fff;color:#111;border:none;font-size:11px;letter-spacing:.22em;font-weight:700;text-transform:uppercase;border-radius:3px;cursor:pointer">
-        导出 PNG
-      </button>
-    </div>
-  `
-
-  // 绑定事件（每次 render 后重新绑定）
-  bindEvents()
-  if(image) initCrop(imgW,imgH)
-  rendered=true
 }
 
-/* ══════════════════════════════════════════
-   EVENT DELEGATION — 避免 input 重绘
-══════════════════════════════════════════ */
-function bindEvents(){
-  const app=document.getElementById('app')
-
-  // file input：直接绑定在元素上，不走委托，避免 render 后丢失
-  const filein=document.getElementById('filein')
-  if(filein) filein.addEventListener('change',()=>handleFile(filein))
-
-  // 按钮 / select / checkbox 事件委托
-  app.addEventListener('click',e=>{
-    const b=e.target.closest('[data-action]')
-    if(!b)return
-    const act=b.dataset.action
-    if(act==='upload') document.getElementById('filein').click()
-    if(act==='panel'){state.panel=b.dataset.panel;render()}
-    if(act==='ratio'){state.ratio=RATIOS.find(r=>r.id===b.dataset.id);state.imgX=0;state.imgY=0;state.imgScale=1;render()}
-    if(act==='color'){
-      const v=b.dataset.val||b.value
-      if(v){state[b.dataset.key]=v;render()}
-    }
-    if(act==='export') doExport()
-  },true)
-
-  app.addEventListener('change',e=>{
-    // color input change
-    if(e.target.dataset.action==='color'){state[e.target.dataset.key]=e.target.value;render();return}
-    // font select
-    if(e.target.dataset.action==='font'){state.font=e.target.value;render();return}
-    // showText checkbox
-    if(e.target.id==='st'){state.showText=e.target.checked;render();return}
-    // file handled directly in bindEvents
+/* ═══ TAB SWITCHING ═══ */
+function switchTab(tab){
+  state.panel=tab
+  ;['color','text','ratio'].forEach(t=>{
+    const btn=document.querySelector(`[data-tab="${t}"]`)
+    const panel=document.getElementById(`panel-${t}`)
+    const active=t===tab
+    btn.style.background=active?'#1E1E1E':'transparent'
+    btn.style.borderBottom=active?'2px solid #fff':'2px solid transparent'
+    btn.style.color=active?'#fff':'#555'
+    panel.style.display=active?'block':'none'
   })
-
-  // 文字输入：input 事件只更新 state，不 render（防止键盘收回）
-  // 只在 blur 时更新邮票预览
-  app.addEventListener('input',e=>{
-    const f=e.target.dataset.field
-    if(!f)return
-    let v=e.target.value
-    if(f==='cityEn') v=v.toUpperCase()
-    state[f]=v
-    // 实时更新预览文字（只更新 DOM 节点，不整体 render）
-    updateTextPreview()
-  })
-
-  app.addEventListener('blur',e=>{
-    if(e.target.dataset.field) render()
-  },true)
+  if(tab==='text') buildTextPanel()
 }
 
-/* 只更新预览里的文字节点，不重绘整个页面 */
-function updateTextPreview(){
-  const {year,seasonEn,seasonZh,cityZh,cityEn,ratio}=state
-  const imgW=ratio.w-18*2
-  const cityFS=Math.min(20,imgW/Math.max(cityZh.length,1)*1.1+4)
-  const el=document.querySelector('#stamp-export [data-textzone]')
-  if(!el)return
-  el.children[0].textContent=`${year} · ${seasonEn} · ${seasonZh}`
-  el.children[1].textContent=cityZh
-  el.children[1].style.fontSize=cityFS+'px'
-  el.children[2].textContent=cityEn
-}
-
-/* ══════════════════════════════════════════
-   IMAGE CROP — 触摸拖拽 + 双指缩放
-══════════════════════════════════════════ */
-function initCrop(boxW,boxH){
-  const wrap=document.getElementById('crop-wrap')
+/* ═══ IMAGE CROP ═══ */
+function initCropAfterLoad(){
+  const {imgW,imgH}=getDims()
   const img=document.getElementById('crop-img')
-  if(!wrap||!img)return
-
-  // 等图片加载完再初始化
   function setup(){
     const nw=img.naturalWidth,nh=img.naturalHeight
-    // 初始缩放：铺满容器
-    if(state.imgScale===1&&state.imgX===0&&state.imgY===0){
-      const sc=Math.max(boxW/nw,boxH/nh)
-      state.imgScale=sc
-      state.imgX=(boxW-nw*sc)/2
-      state.imgY=(boxH-nh*sc)/2
-    }
+    const sc=Math.max(imgW/nw,imgH/nh)
+    state.imgScale=sc
+    state.imgX=(imgW-nw*sc)/2
+    state.imgY=(imgH-nh*sc)/2
     applyTransform()
-    bindCrop(wrap,img,boxW,boxH)
   }
-  if(img.complete) setup()
+  if(img.complete&&img.naturalWidth) setup()
   else img.onload=setup
+  bindCrop()
 }
 
 function applyTransform(){
@@ -369,110 +360,82 @@ function applyTransform(){
 function clampPos(x,y,scale){
   const img=document.getElementById('crop-img')
   if(!img)return{x,y}
+  const {imgW,imgH}=getDims()
   const nw=img.naturalWidth*scale,nh=img.naturalHeight*scale
-  const wrap=document.getElementById('crop-wrap')
-  const bw=wrap?wrap.offsetWidth:260,bh=wrap?wrap.offsetHeight:200
-  const minX=bw-nw,minY=bh-nh
-  return{x:Math.min(0,Math.max(minX,x)),y:Math.min(0,Math.max(minY,y))}
+  return{x:Math.min(0,Math.max(imgW-nw,x)),y:Math.min(0,Math.max(imgH-nh,y))}
 }
 
-function bindCrop(wrap,img,boxW,boxH){
-  let t0=null,lastDist=null,lastMid=null
-
+let cropBound=false
+function bindCrop(){
+  if(cropBound)return
+  cropBound=true
+  const wrap=document.getElementById('crop-wrap')
+  let t0=null,lastDist=null
   wrap.addEventListener('touchstart',e=>{
     e.preventDefault()
-    if(e.touches.length===1){
-      t0={x:e.touches[0].clientX-state.imgX,y:e.touches[0].clientY-state.imgY}
-      lastDist=null
-    }
-    if(e.touches.length===2){
-      lastDist=getDist(e.touches)
-      lastMid=getMid(e.touches)
-      t0=null
-    }
+    if(e.touches.length===1){t0={x:e.touches[0].clientX-state.imgX,y:e.touches[0].clientY-state.imgY};lastDist=null}
+    if(e.touches.length===2){lastDist=dist(e.touches);t0=null}
   },{passive:false})
-
   wrap.addEventListener('touchmove',e=>{
     e.preventDefault()
     if(e.touches.length===1&&t0){
-      let x=e.touches[0].clientX-t0.x
-      let y=e.touches[0].clientY-t0.y
-      const c=clampPos(x,y,state.imgScale)
-      state.imgX=c.x;state.imgY=c.y
-      applyTransform()
+      const c=clampPos(e.touches[0].clientX-t0.x,e.touches[0].clientY-t0.y,state.imgScale)
+      state.imgX=c.x;state.imgY=c.y;applyTransform()
     }
-    if(e.touches.length===2&&lastDist!==null){
-      const dist=getDist(e.touches)
-      const ratio=dist/lastDist
-      const newScale=Math.min(8,Math.max(0.3,state.imgScale*ratio))
-      // 以双指中点为缩放中心
-      const mid=getMid(e.touches)
-      const rect=wrap.getBoundingClientRect()
-      const cx=mid.x-rect.left,cy=mid.y-rect.top
-      state.imgX=cx-(cx-state.imgX)*(newScale/state.imgScale)
-      state.imgY=cy-(cy-state.imgY)*(newScale/state.imgScale)
-      state.imgScale=newScale
-      const c=clampPos(state.imgX,state.imgY,newScale)
-      state.imgX=c.x;state.imgY=c.y
-      applyTransform()
-      lastDist=dist
+    if(e.touches.length===2&&lastDist){
+      const d2=dist(e.touches),ratio=d2/lastDist
+      const ns=Math.min(8,Math.max(0.3,state.imgScale*ratio))
+      const md=mid(e.touches),rect=wrap.getBoundingClientRect()
+      const cx=md.x-rect.left,cy=md.y-rect.top
+      state.imgX=cx-(cx-state.imgX)*(ns/state.imgScale)
+      state.imgY=cy-(cy-state.imgY)*(ns/state.imgScale)
+      state.imgScale=ns
+      const c=clampPos(state.imgX,state.imgY,ns)
+      state.imgX=c.x;state.imgY=c.y;applyTransform()
+      lastDist=d2
     }
   },{passive:false})
-
-  wrap.addEventListener('touchend',e=>{
-    if(e.touches.length<2){lastDist=null;lastMid=null}
-    if(e.touches.length===0) t0=null
-  })
-
-  // 鼠标支持（桌面调试用）
-  let md=null
-  wrap.addEventListener('mousedown',e=>{md={x:e.clientX-state.imgX,y:e.clientY-state.imgY}})
-  wrap.addEventListener('mousemove',e=>{
-    if(!md)return
-    const c=clampPos(e.clientX-md.x,e.clientY-md.y,state.imgScale)
-    state.imgX=c.x;state.imgY=c.y;applyTransform()
-  })
-  wrap.addEventListener('mouseup',()=>{md=null})
-  wrap.addEventListener('wheel',e=>{
-    e.preventDefault()
-    const sc=Math.min(8,Math.max(0.3,state.imgScale*(1-e.deltaY*0.001)))
-    state.imgScale=sc;applyTransform()
-  },{passive:false})
+  wrap.addEventListener('touchend',e=>{if(e.touches.length<2)lastDist=null;if(!e.touches.length)t0=null})
+  let md2=null
+  wrap.addEventListener('mousedown',e=>{md2={x:e.clientX-state.imgX,y:e.clientY-state.imgY}})
+  wrap.addEventListener('mousemove',e=>{if(!md2)return;const c=clampPos(e.clientX-md2.x,e.clientY-md2.y,state.imgScale);state.imgX=c.x;state.imgY=c.y;applyTransform()})
+  wrap.addEventListener('mouseup',()=>md2=null)
+  wrap.addEventListener('wheel',e=>{e.preventDefault();state.imgScale=Math.min(8,Math.max(0.3,state.imgScale*(1-e.deltaY*0.001)));applyTransform()},{passive:false})
 }
+function dist(t){const dx=t[0].clientX-t[1].clientX,dy=t[0].clientY-t[1].clientY;return Math.sqrt(dx*dx+dy*dy)}
+function mid(t){return{x:(t[0].clientX+t[1].clientX)/2,y:(t[0].clientY+t[1].clientY)/2}}
 
-function getDist(touches){
-  const dx=touches[0].clientX-touches[1].clientX
-  const dy=touches[0].clientY-touches[1].clientY
-  return Math.sqrt(dx*dx+dy*dy)
-}
-function getMid(touches){
-  return{x:(touches[0].clientX+touches[1].clientX)/2,y:(touches[0].clientY+touches[1].clientY)/2}
-}
-
-/* ══════════════════════════════════════════
-   FILE HANDLING
-══════════════════════════════════════════ */
+/* ═══ FILE HANDLING ═══ */
 async function handleFile(input){
   const file=input.files[0];if(!file)return
-  // 重置裁剪
-  state.imgX=0;state.imgY=0;state.imgScale=1
+  state.imgX=0;state.imgY=0;state.imgScale=1;cropBound=false
   const reader=new FileReader()
-  reader.onload=ev=>{state.image=ev.target.result;render()}
+  reader.onload=ev=>{
+    state.image=ev.target.result
+    const img=document.getElementById('crop-img')
+    img.src=ev.target.result
+    img.style.display='block'
+    document.getElementById('img-placeholder').style.display='none'
+    document.getElementById('crop-hint').style.display='block'
+    document.getElementById('btn-upload').textContent='换图'
+    initCropAfterLoad()
+  }
   reader.readAsDataURL(file)
-  // exif date
   try{
     const all=await exifr.parse(file,{pick:['DateTimeOriginal','CreateDate']})
     const dt=all?.DateTimeOriginal||all?.CreateDate
     if(dt){const d=dt instanceof Date?dt:new Date(dt);if(!isNaN(d)){
       state.year=String(d.getFullYear())
       const mm=d.getMonth();state.seasonEn=SEASONS.en[M2S[mm]];state.seasonZh=SEASONS.zh[M2S[mm]]
+      updateTextContent()
+      // refresh text panel inputs if open
+      if(state.panel==='text') buildTextPanel()
     }}
   }catch(e){}
-  // gps
-  state.geoStatus='loading';render()
+  state.geoStatus='loading';updateGeoBar()
   try{
     const gps=await exifr.gps(file)
-    if(!gps?.latitude){state.geoStatus='none';render();return}
+    if(!gps?.latitude){state.geoStatus='none';updateGeoBar();return}
     const [r1,r2]=await Promise.all([
       fetch(`https://nominatim.openstreetmap.org/reverse?lat=${gps.latitude}&lon=${gps.longitude}&format=json&accept-language=zh-CN`),
       fetch(`https://nominatim.openstreetmap.org/reverse?lat=${gps.latitude}&lon=${gps.longitude}&format=json&accept-language=en`)
@@ -484,52 +447,98 @@ async function handleFile(input){
     if(zh)state.cityZh=zh
     if(en)state.cityEn=en
     state.geoStatus=zh?'found':'none'
+    updateTextContent()
+    if(state.panel==='text') buildTextPanel()
   }catch(e){state.geoStatus='none'}
-  render()
+  updateGeoBar()
 }
 
-/* ══════════════════════════════════════════
-   EXPORT — iOS 用长按保存方案
-══════════════════════════════════════════ */
+/* ═══ EXPORT ═══ */
 async function doExport(){
-  const btn=document.querySelector('[data-action="export"]')
-  if(btn){btn.textContent='生成中…';btn.style.background='#ccc';btn.style.pointerEvents='none'}
-
-  // 临时隐藏 hint
-  const hint=document.querySelector('.crop-hint')
-  if(hint)hint.style.display='none'
-
+  const btn=document.getElementById('btn-export')
+  btn.textContent='生成中…';btn.style.background='#ccc';btn.style.pointerEvents='none'
+  const hint=document.getElementById('crop-hint');if(hint)hint.style.display='none'
   try{
     const el=document.getElementById('stamp-export')
     const canvas=await html2canvas(el,{scale:3,useCORS:true,backgroundColor:null,logging:false})
     const dataUrl=canvas.toDataURL('image/png')
-
     const isIOS=/iPad|iPhone|iPod/.test(navigator.userAgent)
     if(isIOS){
-      // iOS Safari 不支持 download 属性，展示遮罩让用户长按保存
       document.getElementById('export-img').src=dataUrl
       document.getElementById('export-overlay').classList.add('show')
-    } else {
+    }else{
       const a=document.createElement('a')
       a.download=`stamp-${state.cityEn.replace(/\s/g,'_')}.png`
       a.href=dataUrl;a.click()
     }
   }catch(e){alert('生成失败，请重试')}
-
-  if(hint)hint.style.display=''
-  if(btn){btn.textContent='导出 PNG';btn.style.background='#fff';btn.style.pointerEvents=''}
+  if(hint)hint.style.display='block'
+  btn.textContent='导出 PNG';btn.style.background='#fff';btn.style.pointerEvents=''
 }
 
 function closeExport(){
   document.getElementById('export-overlay').classList.remove('show')
-  // 清空 src 释放内存
   setTimeout(()=>{document.getElementById('export-img').src=''},300)
 }
 
-/* ══════════════════════════════════════════
-   INIT
-══════════════════════════════════════════ */
-render()
+/* ═══ GLOBAL EVENT LISTENERS ═══ */
+// tabs
+document.querySelectorAll('[data-tab]').forEach(btn=>{
+  btn.addEventListener('click',()=>switchTab(btn.dataset.tab))
+})
+
+// color dots（事件委托）
+document.getElementById('app').addEventListener('click',e=>{
+  // dot button
+  const dot=e.target.closest('[data-dot]')
+  if(dot){
+    state[dot.dataset.key]=dot.dataset.dot
+    updateColors()
+    return
+  }
+  // ratio button
+  const rb=e.target.closest('[data-ratio]')
+  if(rb){
+    state.ratio=RATIOS.find(r=>r.id===rb.dataset.ratio)
+    state.imgX=0;state.imgY=0;state.imgScale=1;cropBound=false
+    updateStampSize();updateTextContent()
+    buildRatioPanel()
+    if(state.image){
+      setTimeout(initCropAfterLoad,50)
+    }
+    return
+  }
+})
+
+// color picker input
+document.getElementById('app').addEventListener('input',e=>{
+  // color picker
+  if(e.target.dataset.colorpicker){
+    state[e.target.dataset.colorpicker]=e.target.value
+    updateColors()
+    return
+  }
+  // text fields — update state only, no redraw
+  const f=e.target.dataset.field
+  if(!f)return
+  let v=e.target.value
+  if(f==='cityEn') v=v.toUpperCase()
+  state[f]=v
+  updateTextContent()
+})
+
+// upload
+document.getElementById('btn-upload').addEventListener('click',()=>document.getElementById('filein').click())
+document.getElementById('filein').addEventListener('change',()=>handleFile(document.getElementById('filein')))
+document.getElementById('btn-export').addEventListener('click',doExport)
+
+/* ═══ INIT ═══ */
+updateStampSize()
+updateColors()
+updateFont()
+updateTextContent()
+buildColorPanel()
+buildRatioPanel()
 </script>
 </body>
 </html>
